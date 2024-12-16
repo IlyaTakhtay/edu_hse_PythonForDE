@@ -1,71 +1,68 @@
-from kafka import KafkaConsumer, KafkaProducer
-import psycopg2
-import json
-from datetime import datetime
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import from_json, col, hour
+from pyspark.sql.types import StructType, StructField, StringType, FloatType, IntegerType, TimestampType
 
-# Kafka настройки
-consumer = KafkaConsumer(
-    "transactions_topic",
-    bootstrap_servers="localhost:9092",
-    value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-    auto_offset_reset="earliest"
+# Конфигурация
+KAFKA_BROKER = "localhost:9092"
+TRANSACTION_TOPIC = "transaction_topic"
+SUSPICIOUS_TOPIC = "suspicious_transactions"
+POSTGRES_URL = "jdbc:postgresql://localhost:5432/kafka"
+POSTGRES_USER = "kafka_adm"
+POSTGRES_PASSWORD = "1234q"
+USER_INFO_TABLE = "clients"
+
+spark = SparkSession.builder \
+    .appName("SuspiciousTransactionDetection") \
+    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,org.postgresql:postgresql:42.6.0") \
+    .config("spark.hadoop.fs.defaultFS", "file:///") \
+    .config("spark.hadoop.mapreduce.framework.name", "local") \
+    .getOrCreate()
+
+
+transactions_df = spark.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", KAFKA_BROKER) \
+    .option("subscribe", TRANSACTION_TOPIC) \
+    .load()
+
+transactions = transactions_df.selectExpr("CAST(value AS STRING) as json_data")
+
+schema = StructType([
+    StructField("transaction_id", IntegerType(), True),
+    StructField("user_id", IntegerType(), True),
+    StructField("amount", FloatType(), True),
+    StructField("timestamp", TimestampType(), True),
+    StructField("location", StringType(), True)
+])
+
+parsed_data = transactions.withColumn("data", from_json(col("json_data"), schema)).select("data.*")
+
+SUSPICIOUS_HOURS = list(range(23, 24)) + list(range(0, 5))
+suspicious_transactions = parsed_data.filter(
+    (col("amount") > 1000) |  # Пороговая сумма
+    (hour(col("timestamp")).isin(SUSPICIOUS_HOURS))  # Ночное время
 )
 
-producer = KafkaProducer(
-    bootstrap_servers="localhost:9092",
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+user_info_df = spark.read \
+    .format("jdbc") \
+    .option("url", POSTGRES_URL) \
+    .option("dbtable", USER_INFO_TABLE) \
+    .option("user", POSTGRES_USER) \
+    .option("password", POSTGRES_PASSWORD) \
+    .load()
+
+suspicious_with_user_info = suspicious_transactions.join(
+    user_info_df,
+    on="user_id",
+    how="left"
 )
 
-# PostgreSQL настройки
-conn = psycopg2.connect(
-    dbname="kafka",
-    user="kafka_adm",
-    password="1234q",
-    host="localhost",
-    port="5432"
-)
+query = suspicious_with_user_info.selectExpr("to_json(struct(*)) AS value") \
+    .writeStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", KAFKA_BROKER) \
+    .option("topic", SUSPICIOUS_TOPIC) \
+    .outputMode("append") \
+    .start()
 
-cursor = conn.cursor()
-
-# Пороговое значение и необычное время
-THRESHOLD = 1000
-SUSPICIOUS_HOURS = [range(23, 24)] + [range(0, 5)]
-
-def is_suspicious(transaction, user_info):
-    # Проверка суммы
-    if transaction["amount"] > THRESHOLD:
-        return True
-    
-    # Проверка времени
-    transaction_time = datetime.fromisoformat(transaction["timestamp"])
-    if transaction_time.hour in SUSPICIOUS_HOURS:
-        return True
-    
-    # Проверка местоположения
-    if transaction["location"] not in [user_info["registration_address"], user_info["last_known_location"]]:
-        return True
-
-    return False
-
-if __name__ == "__main__":
-    print("Analyzing transactions...")
-    for message in consumer:
-        transaction = message.value
-
-        # Получаем информацию о пользователе из базы данных
-        cursor.execute(
-            "SELECT registration_address, last_known_location FROM clients WHERE user_id = %s",
-            (transaction["user_id"],)
-        )
-        result = cursor.fetchone()
-
-        if result:
-            user_info = {
-                "registration_address": result[0],
-                "last_known_location": result[1]
-            }
-
-            # Проверяем на подозрительность
-            if is_suspicious(transaction, user_info):
-                print(f"Suspicious transaction: {transaction}")
-                producer.send("suspicious_transactions_topic", value=transaction)
+query.awaitTermination()
