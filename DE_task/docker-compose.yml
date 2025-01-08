@@ -1,0 +1,78 @@
+x-postgresql-connection-env: &pg-connect
+  POSTGRESQL_APP_HOST: ${POSTGRESQL_APP_HOST}
+  POSTGRESQL_APP_DB: ${POSTGRESQL_APP_DB}
+  POSTGRESQL_APP_SCHEMA: ${POSTGRESQL_APP_SCHEMA}
+  POSTGRESQL_APP_USER: ${POSTGRESQL_APP_USER}
+  POSTGRESQL_APP_PASSWORD: ${POSTGRESQL_APP_PASSWORD}
+
+x-mysql-connection-env: &mysql-connect
+  MYSQL_APP_HOST: ${MYSQL_APP_HOST}
+  MYSQL_APP_DB: ${MYSQL_APP_DB}
+  MYSQL_APP_USER: ${MYSQL_APP_USER}
+  MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD}
+ 
+services:
+  mysql:
+    build: ./db/mysql
+    container_name: mysql
+    hostname: ${MYSQL_APP_HOST}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    environment:
+      <<: *mysql-connect
+      # Пароль от root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    env_file:
+      - .env
+        
+    healthcheck:
+      # condition, на основе которого проверяем готовность СУБД
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    
+    restart: always
+
+  postgres:
+    build: ./db/postgresql
+    container_name: postgres
+    hostname: ${POSTGRESQL_APP_HOST}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      <<: *pg-connect
+      # Пароль от root
+      POSTGRES_PASSWORD: ${POSTGRESQL_ROOT_PASSWORD}
+    env_file:
+      - .env
+
+    healthcheck:
+      # condition, на основе которого проверяем готовность СУБД
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+    restart: always
+
+  datagen:
+    build: ./datagen
+    container_name: pg_datagen
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *pg-connect
+      AI_USER_ID: ${AI_USER_ID}
+      AI_API_KEY: ${AI_API_KEY}
+    restart: no
+
+
+volumes:
+  mysql_data:
+  postgres_data:
