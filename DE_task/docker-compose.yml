@@ -10,7 +10,26 @@ x-mysql-connection-env: &mysql-connect
   MYSQL_APP_DB: ${MYSQL_APP_DB}
   MYSQL_APP_USER: ${MYSQL_APP_USER}
   MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD}
- 
+
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow # Указываем путь до директории с Dockerfile для Airflow
+    dockerfile: Dockerfile
+  image: my-airflow-image:latest # Имя образа, которое будет собрано
+  environment:
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: ${AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK}
+    AIRFLOW_UID: ${AIRFLOW_UID}
+  env_file:
+    - .env
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./airflow/spark_jobs:/opt/airflow/spark_jobs
+    - ./airflow/jars:/opt/airflow/jars
+    - /var/run/docker.sock:/var/run/docker.sock
+
 services:
   mysql:
     build: ./db/mysql
@@ -26,14 +45,13 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     env_file:
       - .env
-        
+
     healthcheck:
-      # condition, на основе которого проверяем готовность СУБД
       test: ["CMD-SHELL", "mysqladmin ping -h localhost"]
       interval: 5s
       timeout: 5s
       retries: 5
-    
+
     restart: always
 
   postgres:
@@ -52,7 +70,6 @@ services:
       - .env
 
     healthcheck:
-      # condition, на основе которого проверяем готовность СУБД
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
@@ -72,6 +89,47 @@ services:
       AI_API_KEY: ${AI_API_KEY}
     restart: no
 
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      - airflow-init
+      - postgres:
+        condition: service_healthy
+      - mysql:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      - airflow-webserver
+      - postgres:
+        condition: service_healthy
+      - mysql:
+        condition: service_healthy
+    deploy:
+    resources:
+      limits:
+        cpus: '1'
+        memory: 1G
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command: -c "airflow db init && airflow users create --username admin --password admin --firstname FIRST_NAME --lastname LAST_NAME --role Admin --email example@email.com"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
 volumes:
   mysql_data:

@@ -1,0 +1,4 @@
+pyspark
+apache-airflow-providers-postgres
+apache-airflow-providers-mysql
+apache-airflow-providers-apache-spark

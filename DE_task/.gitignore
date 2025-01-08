@@ -1,1 +1,5 @@
 ./mypy_cache
+.env
+./jars
+./dags
+./plugins
