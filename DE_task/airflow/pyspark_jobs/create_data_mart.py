@@ -34,7 +34,7 @@ def create_sales_mart(source_conn_id: str, target_conn_id: str, target_table: st
 
     sales_mart = orderdetails.join(orders, "order_id", "inner")
 
-    sales_mart = sales_mart.withColumn("order_date_sk", F.date_format("order_date", "yyyyMMdd").cast("int"))
+    sales_mart = sales_mart.withColumn("order_date_sk", F.date_format("order_date", "yyyy-MM-dd").cast("date"))
 
     # Агрегируем данные по дате, пользователю и продукту
     sales_mart = sales_mart.groupBy("order_date_sk", "user_id", "product_id").agg(
