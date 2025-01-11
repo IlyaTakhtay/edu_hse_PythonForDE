@@ -1,5 +1,19 @@
+#!/bin/bash
+
+# Запуск Airflow
+airflow db migrate
+
+# Создание юзеров
+airflow users create \
+    --username "$_AIRFLOW_WWW_USER_USERNAME" \
+    --password "$_AIRFLOW_WWW_USER_PASSWORD" \
+    --firstname John \
+    --lastname Lennon \
+    --role Admin \
+    --email qwerty@gamil.com
+
 # Создание коннектов
-airflow connections add 'python_de_finals_postgresql' \
+airflow connections add 'postgres_conn_in_airlflow' \
     --conn-json '{
         "conn_type": "postgres",
         "login": "'"$POSTGRESQL_APP_USER"'",
@@ -12,7 +26,7 @@ airflow connections add 'python_de_finals_postgresql' \
         }
     }'
 
-airflow connections add 'python_de_finals_mysql' \
+airflow connections add 'mysql_conn_in_airlflow' \
     --conn-json '{
         "conn_type": "mysql",
         "login": "'"$MYSQL_APP_USER"'",
@@ -22,7 +36,7 @@ airflow connections add 'python_de_finals_mysql' \
         "schema": "'"$MYSQL_APP_DB"'"
     }'
 
-airflow connections add 'python_de_finals_spark' \
+airflow connections add 'pyspark_conn_in_airflow' \
     --conn-json '{
         "conn_type": "generic",
         "host": "spark://'"$SPARK_MASTER_HOST"'",

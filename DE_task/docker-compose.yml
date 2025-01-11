@@ -11,30 +11,27 @@ x-mysql-connection-env: &mysql-connect
   MYSQL_APP_USER: ${MYSQL_APP_USER}
   MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD}
 
-x-airflow-common: &airflow-common
-  build:
-    context: ./airflow # Указываем путь до директории с Dockerfile для Airflow
-    dockerfile: Dockerfile
-  image: my-airflow-image:latest # Имя образа, которое будет собрано
-  environment:
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
-    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: ${AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK}
-    AIRFLOW_UID: ${AIRFLOW_UID}
-  env_file:
-    - .env
-  volumes:
-    - ./airflow/dags:/opt/airflow/dags
-    - ./airflow/logs:/opt/airflow/logs
-    - ./airflow/plugins:/opt/airflow/plugins
-    - ./airflow/spark_jobs:/opt/airflow/spark_jobs
-    - ./airflow/jars:/opt/airflow/jars
-    - /var/run/docker.sock:/var/run/docker.sock
+x-airflow-common-env: &airflow-common-env
+  AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
+  AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: ${AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK}
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+  AIRFLOW_UID: ${AIRFLOW_UID}
+  _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}
+  _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD}
+  SPARK_MASTER_HOST: ${SPARK_MASTER_HOST}
+  SPARK_MASTER_PORT: ${SPARK_MASTER_PORT}
 
+x-spark-common-env: &spark-common-env
+  SPARK_RPC_AUTHENTICATION_ENABLED: ${SPARK_RPC_AUTHENTICATION_ENABLED}
+  SPARK_RPC_ENCRYPTION_ENABLED: ${SPARK_RPC_ENCRYPTION_ENABLED}
+  SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: ${SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED}
+  SPARK_SSL_ENABLED: ${SPARK_SSL_ENABLED}
 services:
   mysql:
     build: ./db/mysql
     container_name: mysql
-    hostname: ${MYSQL_APP_HOST}
+    # hostname: ${MYSQL_APP_HOST}
     ports:
       - "3306:3306"
     volumes:
@@ -57,7 +54,7 @@ services:
   postgres:
     build: ./db/postgresql
     container_name: postgres
-    hostname: ${POSTGRESQL_APP_HOST}
+    # hostname: ${POSTGRESQL_APP_HOST}
     ports:
       - "5432:5432"
     volumes:
@@ -68,7 +65,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRESQL_ROOT_PASSWORD}
     env_file:
       - .env
-
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -88,17 +84,42 @@ services:
       AI_USER_ID: ${AI_USER_ID}
       AI_API_KEY: ${AI_API_KEY}
     restart: no
-
-  airflow-webserver:
-    <<: *airflow-common
-    command: webserver
+  
+  spark-master:
+    build: ./spark/spark-master
+    container_name: spark-master
+    environment:
+      <<: *spark-common-env
+      SPARK_MODE: master
+      SPARK_MASTER_WEBUI_PORT: 8081
     ports:
-      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - spark_data:/bitnami
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  spark-worker:
+    build: ./spark/spark-worker
+    container_name: spark-worker
+    environment:
+      <<: *spark-common-env
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}
+      SPARK_WORKER_MEMORY: 1G
+      SPARK_WORKER_CORES: 1
+    volumes:
+      - spark_data:/bitnami
     depends_on:
-      - airflow-init
-      - postgres:
-        condition: service_healthy
-      - mysql:
+      spark-master:
         condition: service_healthy
     deploy:
       resources:
@@ -106,25 +127,64 @@ services:
           cpus: '1'
           memory: 1G
 
-  airflow-scheduler:
-    <<: *airflow-common
-    command: scheduler
-    depends_on:
-      - airflow-webserver
-      - postgres:
-        condition: service_healthy
-      - mysql:
-        condition: service_healthy
-    deploy:
-    resources:
-      limits:
-        cpus: '1'
-        memory: 1G
-
   airflow-init:
-    <<: *airflow-common
-    entrypoint: /bin/bash
-    command: -c "airflow db init && airflow users create --username admin --password admin --firstname FIRST_NAME --lastname LAST_NAME --role Admin --email example@email.com"
+    build: ./airflow/init
+    container_name: airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      spark-master:
+        condition: service_healthy
+      datagen:
+        condition: service_completed_successfully
+    environment:
+      <<: [*airflow-common-env, *pg-connect, *mysql-connect]
+    volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/pyspark_jobs:/opt/airflow/scripts
+    - sqlite_airflow_data:/usr/local/airflow/db:rw
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  airflow-scheduler:
+    build: ./airflow/scheduler
+    container_name: airflow-scheduler
+    environment:
+      <<: [*airflow-common-env]
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/pyspark_jobs:/opt/airflow/scripts
+    - sqlite_airflow_data:/usr/local/airflow/db:rw
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  airflow-webserver:
+    build: ./airflow/webserver
+    container_name: airflow-webserver
+    environment:
+      <<: *airflow-common-env
+    ports:
+      - "8080:8080"
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    volumes:
+    - .airflow/dags:/opt/airflow/dags
+    - .airflow/pyspark_jobs:/opt/airflow/scripts
+    - sqlite_airflow_data:/usr/local/airflow/db:rw
     deploy:
       resources:
         limits:
@@ -132,5 +192,7 @@ services:
           memory: 1G
 
 volumes:
-  mysql_data:
   postgres_data:
+  mysql_data:
+  sqlite_airflow_data:
+  spark_data:

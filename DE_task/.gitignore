@@ -3,3 +3,5 @@
 ./jars
 ./dags
 ./plugins
+./airflow
+./__pycache__

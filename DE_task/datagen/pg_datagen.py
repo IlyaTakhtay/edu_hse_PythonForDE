@@ -36,7 +36,6 @@ class DataGenerator:
         self.num_products = num_products
         self.num_orders = num_orders
         self.fake = Faker('ru_RU')
-        self.fake.add_provider(CommerceProvider)
         self.category_ids = []
         self.token_expire = 0
         self.__access_token = None

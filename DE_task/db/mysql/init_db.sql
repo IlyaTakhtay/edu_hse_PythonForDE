@@ -8,7 +8,7 @@ FLUSH PRIVILEGES;
 USE ${MYSQL_APP_DB};
 
 -- Таблица Users
-CREATE TABLE IF NOT EXISTS Users (
+CREATE TABLE IF NOT EXISTS users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
     first_name VARCHAR(255) NOT NULL,
     last_name VARCHAR(255) NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS Users (
 );
 
 -- Таблица ProductCategories
-CREATE TABLE IF NOT EXISTS ProductCategories (
+CREATE TABLE IF NOT EXISTS productcategories (
     category_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     parent_category_id INT,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS ProductCategories (
 );
 
 -- Таблица Products
-CREATE TABLE IF NOT EXISTS Products (
+CREATE TABLE IF NOT EXISTS products (
     product_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS Products (
 );
 
 -- Таблица Orders
-CREATE TABLE IF NOT EXISTS Orders (
+CREATE TABLE IF NOT EXISTS orders (
     order_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT,
     order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS Orders (
 );
 
 -- Таблица OrderDetails
-CREATE TABLE IF NOT EXISTS OrderDetails (
+CREATE TABLE IF NOT EXISTS orderdetails (
     order_detail_id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT,
     product_id INT,
